@@ -88,11 +88,11 @@ export function initializeWorkspace(): void {
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (workspaceFolders !== undefined) {
     state.workspacePath = workspaceFolders[0].uri.fsPath;
-    const whisperDir = `${state.workspacePath}/.whisper`;
+    const whisperDir = `${state.workspacePath}/.whisperx`;
     if (!fs.existsSync(whisperDir)) {
       fs.mkdirSync(whisperDir);
     }
-    state.outputDir = `${state.workspacePath}/.whisper`;
+    state.outputDir = `${state.workspacePath}/.whisperx`;
   }
 }
 
