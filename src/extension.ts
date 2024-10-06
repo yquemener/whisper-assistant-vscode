@@ -4,6 +4,7 @@ import SpeechTranscription, {
   WhisperModel,
 } from './speech-transcription';
 import * as fs from 'fs';
+import * as path from 'path';
 
 interface ExtensionState {
   myStatusBarItem: vscode.StatusBarItem | undefined;
@@ -27,17 +28,17 @@ export const state: ExtensionState = {
 };
 
 export async function activate(context: vscode.ExtensionContext) {
-  initializeWorkspace();
-
-  if (state.workspacePath === undefined || state.outputDir === undefined) {
-    console.log('Please open a workspace directory before starting recording.');
-    return;
+  // Utiliser le stockage global de l'extension pour les fichiers temporaires
+  const whisperDir = context.globalStorageUri.fsPath;
+  if (!fs.existsSync(whisperDir)) {
+    fs.mkdirSync(whisperDir, { recursive: true });
   }
+  state.outputDir = whisperDir;
 
   // Initialize the Recording class
   initializeOutputChannel();
   state.speechTranscription = new SpeechTranscription(
-    state.outputDir as string,
+    state.outputDir,
     state.outputChannel as vscode.OutputChannel,
   );
 
@@ -62,7 +63,13 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   if (isSoxInstalled && isWhisperInstalled) {
-    registerCommands(context);
+    // Enregistrer la commande
+    let disposable = vscode.commands.registerCommand(
+      'whisperAssistant.toggleRecording',
+      toggleRecordingCommand,
+    );
+    context.subscriptions.push(disposable);
+
     initializeStatusBarItem();
     updateStatusBarItem();
     if (state.myStatusBarItem !== undefined) {
@@ -84,29 +91,8 @@ export function initializeStatusBarItem(): void {
   state.myStatusBarItem.show(); // Make sure the status bar item is shown
 }
 
-export function initializeWorkspace(): void {
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (workspaceFolders !== undefined) {
-    state.workspacePath = workspaceFolders[0].uri.fsPath;
-    const whisperDir = `${state.workspacePath}/.whisperx`;
-    if (!fs.existsSync(whisperDir)) {
-      fs.mkdirSync(whisperDir);
-    }
-    state.outputDir = `${state.workspacePath}/.whisperx`;
-  }
-}
-
-function registerCommands(context: vscode.ExtensionContext): void {
-  let toggleRecordingDisposable = vscode.commands.registerCommand(
-    'whisperAssistant.toggleRecording',
-    toggleRecordingCommand,
-  );
-  context.subscriptions.push(toggleRecordingDisposable);
-}
-
 export async function toggleRecordingCommand(): Promise<void> {
   if (
-    state.workspacePath !== undefined &&
     state.outputDir !== undefined &&
     state.speechTranscription !== undefined &&
     !state.isTranscribing
@@ -119,7 +105,7 @@ export async function toggleRecordingCommand(): Promise<void> {
 
       setInterval(updateStatusBarItem, 1000);
     } else {
-      state.speechTranscription.stopRecording();
+      await state.speechTranscription.stopRecording();
       state.isTranscribing = true;
       state.isRecording = false;
 

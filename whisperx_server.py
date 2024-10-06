@@ -20,6 +20,9 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedE
 import whisperx
 import torch
 
+def expand_user_path(path):
+    return os.path.expanduser(path)
+
 def load_config():
     script_dir = os.path.dirname(os.path.realpath(__file__))
     config_path = os.path.join(script_dir, 'whisperx_config.json')
@@ -37,7 +40,7 @@ def load_config():
 config = load_config()
 
 # Configuration
-WATCH_DIRECTORY = config.get('watch_directory', '')
+WATCH_DIRECTORY = expand_user_path(config.get('watch_directory', ''))
 DEVICE = config.get('device', "cuda" if torch.cuda.is_available() else "cpu")
 COMPUTE_TYPE = config.get('compute_type', "float16" if DEVICE == "cuda" else "float32")
 BATCH_SIZE = config.get('batch_size', 16 if DEVICE == "cuda" else 1)
@@ -123,16 +126,17 @@ if __name__ == "__main__":
         print("Error: watch_directory not specified in configuration file.")
         sys.exit(1)
 
-    if not os.path.isdir(WATCH_DIRECTORY):
-        print(f"The directory {WATCH_DIRECTORY} does not exist.")
+    expanded_watch_directory = expand_user_path(WATCH_DIRECTORY)
+    if not os.path.isdir(expanded_watch_directory):
+        print(f"The directory {expanded_watch_directory} does not exist.")
         sys.exit(1)
 
     event_handler = AudioTranscriber()
     observer = Observer()
-    observer.schedule(event_handler, WATCH_DIRECTORY, recursive=False)
+    observer.schedule(event_handler, expanded_watch_directory, recursive=False)
     observer.start()
 
-    print(f"Watching directory {WATCH_DIRECTORY}")
+    print(f"Watching directory {expanded_watch_directory}")
     try:
         while True:
             time.sleep(1)

@@ -1,5 +1,5 @@
 {
-    "watch_directory": "./.whisperx/",
+    "watch_directory": "~/.config/Cursor/User/globalStorage/martinopensky.whisper-assistant/",
     "device": "cuda",
     "compute_type": "float16",
     "batch_size": 16,
