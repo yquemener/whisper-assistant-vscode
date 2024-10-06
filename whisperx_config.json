@@ -1,0 +1,8 @@
+{
+    "watch_directory": "./.whisperx/",
+    "device": "cuda",
+    "compute_type": "float16",
+    "batch_size": 16,
+    "language": "en",
+    "model_size": "large-v2"
+  }

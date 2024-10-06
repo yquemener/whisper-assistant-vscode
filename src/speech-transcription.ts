@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { exec, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import { promisify } from 'util';
+import * as path from 'path';
 
 const execAsync = promisify(exec);
 
@@ -23,14 +24,21 @@ export interface Transcription {
 
 export type WhisperModel = 'tiny' | 'base' | 'small' | 'medium' | 'large';
 
-class SpeechTranscription {
-  private fileName: string = 'recording';
+export default class SpeechTranscription {
+  private outputDir: string;
   private recordingProcess: ChildProcess | null = null;
+  private tempFileName: string = 'recording_temp.wav';
+  private finalFileName: string = 'recording.wav';
+  private outputChannel: vscode.OutputChannel;
+  private currentRecordingId: string = '';
 
   constructor(
-    private outputDir: string,
-    private outputChannel: vscode.OutputChannel,
-  ) {}
+    outputDir: string,
+    outputChannel: vscode.OutputChannel,
+  ) {
+    this.outputDir = outputDir;
+    this.outputChannel = outputChannel;
+  }
 
   async checkIfInstalled(command: string): Promise<boolean> {
     try {
@@ -46,26 +54,24 @@ class SpeechTranscription {
   }
 
   startRecording(): void {
-    try {
-      this.recordingProcess = exec(
-        `sox -d -b 16 -e signed -c 1 -r 16k ${this.outputDir}/${this.fileName}.wav`,
-        (error, stdout, stderr) => {
-          if (error) {
-            this.outputChannel.appendLine(`Whisper Assistant: error: ${error}`);
-            return;
-          }
-          if (stderr) {
-            this.outputChannel.appendLine(
-              `Whisper Assistant: SoX process has been killed: ${stderr}`,
-            );
-            return;
-          }
-          this.outputChannel.appendLine(`Whisper Assistant: stdout: ${stdout}`);
-        },
-      );
-    } catch (error) {
-      this.outputChannel.appendLine(`Whisper Assistant: error: ${error}`);
-    }
+    this.currentRecordingId = Date.now().toString();
+    const tempFilePath = path.join(this.outputDir, `${this.currentRecordingId}_${this.tempFileName}`);
+    this.recordingProcess = exec(
+      `sox -d -b 16 -e signed -c 1 -r 16k ${tempFilePath}`,
+      (error, stdout, stderr) => {
+        if (error) {
+          this.outputChannel.appendLine(`Whisper Assistant: error: ${error}`);
+          return;
+        }
+        if (stderr) {
+          this.outputChannel.appendLine(
+            `Whisper Assistant: SoX process has been killed: ${stderr}`,
+          );
+          return;
+        }
+        this.outputChannel.appendLine(`Whisper Assistant: stdout: ${stdout}`);
+      },
+    );
   }
 
   async stopRecording(): Promise<void> {
@@ -78,6 +84,12 @@ class SpeechTranscription {
     this.outputChannel.appendLine('Whisper Assistant: Stopping recording');
     this.recordingProcess.kill();
     this.recordingProcess = null;
+
+    // Rename the file to trigger transcription
+    const tempFilePath = path.join(this.outputDir, `${this.currentRecordingId}_${this.tempFileName}`);
+    const finalFilePath = path.join(this.outputDir, `${this.currentRecordingId}_${this.finalFileName}`);
+    await fs.promises.rename(tempFilePath, finalFilePath);
+    this.outputChannel.appendLine('Whisper Assistant: Recording saved and ready for transcription');
   }
 
   public async transcribeRecording(model: WhisperModel, language: string): Promise<Transcription | undefined> {
@@ -88,46 +100,62 @@ class SpeechTranscription {
       this.outputChannel.appendLine(
         `Whisper Assistant: Transcribing recording using '${model}' model and '${language}' language`,
       );
-      const { stdout, stderr } = await execAsync(
-        `whisper ${this.outputDir}/${this.fileName}.wav --model ${model} --output_format json --task transcribe --language ${language} --fp16 False --output_dir ${this.outputDir}`,
-      );
+
+      const audioFilePath = path.join(this.outputDir, `${this.currentRecordingId}_${this.finalFileName}`);
+      
+      // Use the transcribe method
+      const transcription = await this.transcribe(audioFilePath);
+
       this.outputChannel.appendLine(
-        `Whisper Assistant: Transcription: ${stdout}`,
+        `Whisper Assistant: Transcription completed`,
       );
-      return await this.handleTranscription();
+
+      return transcription;
     } catch (error) {
       this.outputChannel.appendLine(`Whisper Assistant: error: ${error}`);
     }
   }
 
-  private async handleTranscription(): Promise<Transcription | undefined> {
-    try {
-      const data = await fs.promises.readFile(
-        `${this.outputDir}/${this.fileName}.json`,
-        'utf8',
-      );
-      if (!data) {
-        this.outputChannel.appendLine(
-          'Whisper Assistant: No transcription data found',
-        );
+  async transcribe(audioFilePath: string): Promise<Transcription> {
+    const baseName = path.basename(audioFilePath, '.wav');
+    const resultPath = path.join(this.outputDir, `${baseName}.json`);
+    this.outputChannel.appendLine(`Whisper Assistant: Waiting for result file: ${resultPath}`);
+    
+    // Wait for the transcription result
+    await this.waitForFile(resultPath);
+    
+    // Read and parse the result
+    const resultJson = await fs.promises.readFile(resultPath, 'utf-8');
+    const result = JSON.parse(resultJson);
+    
+    // Clean up both WAV and JSON files
+    await fs.promises.unlink(audioFilePath);
+    await fs.promises.unlink(resultPath);
+    
+    this.outputChannel.appendLine(`Whisper Assistant: Result file found and read: ${resultPath}`);
+    return result;
+  }
+
+  private async waitForFile(filePath: string, timeout = 30000): Promise<void> {
+    const startTime = Date.now();
+    while (true) {
+      if (await fs.promises.access(filePath).then(() => true).catch(() => false)) {
+        // Add a small delay to ensure the file is fully written
+        await new Promise(resolve => setTimeout(resolve, 100));
         return;
       }
-      const transcription: Transcription = JSON.parse(data);
-      this.outputChannel.appendLine(`Whisper Assistant: ${transcription.text}`);
-
-      return transcription;
-    } catch (err) {
-      this.outputChannel.appendLine(
-        `Whisper Assistant: Error reading file from disk: ${err}`,
-      );
+      if (Date.now() - startTime > timeout) {
+        throw new Error(`Timeout waiting for transcription result: ${filePath}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 
   deleteFiles(): void {
-    // Delete files
-    fs.unlinkSync(`${this.outputDir}/${this.fileName}.wav`);
-    fs.unlinkSync(`${this.outputDir}/${this.fileName}.json`);
+    // Delete the WAV file
+    const finalFilePath = path.join(this.outputDir, this.finalFileName);
+    if (fs.existsSync(finalFilePath)) {
+      fs.unlinkSync(finalFilePath);
+    }
   }
 }
-
-export default SpeechTranscription;
