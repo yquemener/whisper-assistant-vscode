@@ -46,9 +46,6 @@ export async function activate(context: vscode.ExtensionContext) {
   const isSoxInstalled = await state.speechTranscription?.checkIfInstalled(
     'sox',
   );
-  const isWhisperInstalled = await state.speechTranscription?.checkIfInstalled(
-    'whisper',
-  );
 
   if (!isSoxInstalled) {
     vscode.window.showErrorMessage(
